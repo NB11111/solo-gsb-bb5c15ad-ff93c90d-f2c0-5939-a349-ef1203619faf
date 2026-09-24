@@ -100,6 +100,50 @@ def test_circular_two_cuts_two_fragments():
     assert all(f["left_end"]["type"] == "5prime" for f in frags)
 
 
+def test_circular_shared_top_cut_single_boundary():
+    # 两个酶识别同一模式 AC，cut_top 均为 0、cut_bottom 分别为 0/1：
+    # 同一物理位点产生 (1,1) 与 (1,2) 两个切口，但环形上只有一个唯一边界
+    e_blunt = FakeEnzyme("B1", "AC", 0, 0)
+    e_sticky = FakeEnzyme("B2", "AC", 0, 1)
+    result = run_digest("AACAA", "circular", [e_blunt, e_sticky])
+    # 完整切口列表按 (top_cut, bottom_cut) 去重，两条都保留
+    assert [(c["top_cut"], c["bottom_cut"]) for c in result["cuts"]] == [(1, 1), (1, 2)]
+    # 唯一边界 -> 一条全长开环片段
+    frags = result["fragments"]
+    assert len(frags) == 1
+    frag = frags[0]
+    assert frag["index"] == 0
+    assert (frag["start"], frag["end"], frag["length"]) == (1, 1, 5)
+    assert frag["sequence"] == "ACAAA"  # seq[1:] + seq[:1]
+    # 同坐标末端按稳定切口顺序取第一条：(1,1) 平端
+    assert frag["left_end"] == {"type": "blunt", "overhang": ""}
+    assert frag["right_end"] == {"type": "blunt", "overhang": ""}
+    # 与酶传入顺序无关
+    assert run_digest("AACAA", "circular", [e_sticky, e_blunt]) == result
+
+
+def test_circular_shared_top_cut_multiple_boundaries():
+    # 两个位点各产生一对共用 top_cut 的切口：4 个物理切口、2 个唯一边界
+    e_blunt = FakeEnzyme("B1", "AC", 0, 0)
+    e_sticky = FakeEnzyme("B2", "AC", 0, 1)
+    seq = "AACAAACAA"  # AC 位点起于 1 与 5
+    result = run_digest(seq, "circular", [e_blunt, e_sticky])
+    assert [(c["top_cut"], c["bottom_cut"]) for c in result["cuts"]] == [
+        (1, 1), (1, 2), (5, 5), (5, 6),
+    ]
+    frags = result["fragments"]
+    assert [f["index"] for f in frags] == [0, 1]
+    assert sum(f["length"] for f in frags) == len(seq)
+    assert [(f["start"], f["end"], f["length"]) for f in frags] == [(1, 5, 4), (5, 1, 5)]
+    assert frags[0]["sequence"] == "ACAA"
+    assert frags[1]["sequence"] == "ACAAA"
+    assert frags[1]["wraps_origin"] is True
+    # 每个边界的末端均取同坐标稳定顺序中的第一条切口（平端）
+    for frag in frags:
+        assert frag["left_end"] == {"type": "blunt", "overhang": ""}
+        assert frag["right_end"] == {"type": "blunt", "overhang": ""}
+
+
 def test_ambiguous_bases_in_pattern_and_sequence():
     # 模式含 N：ANNT 匹配 AGTT
     enz = FakeEnzyme("Amb1", "ANNT", 1, 1)

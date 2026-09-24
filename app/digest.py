@@ -132,8 +132,13 @@ def build_fragments(sequence: str, topology: str, cuts: list[dict]) -> list[dict
 
     * 线性：n 个有效切口产生 n+1 个片段；位于分子端点 (0 或 L) 的
       切口不产生新边界。
-    * 环形：n 个切口产生 n 个片段（仅 1 个切口时开环为 1 条全长片段）；
-      无切口时保留整条环状分子。
+    * 环形：按唯一的 top_cut 坐标划分边界——m 个不同 top_cut 产生
+      m 个片段（m == 1 时开环为 1 条全长片段）；无切口时保留整条
+      环状分子。不同物理切口可能共用同一 top_cut（bottom_cut 不同，
+      即边界处有多种末端），它们在 cuts 中各自保留，但只贡献一个
+      边界；该边界两端的末端信息按 cuts 的稳定顺序（(top_cut,
+      bottom_cut) 升序）取同坐标的第一条，保证输出确定。
+      m >= 2 时各片段长度之和恰为序列长度，不存在退化零长片段。
     """
     length = len(sequence)
     fragments = []
@@ -152,16 +157,22 @@ def build_fragments(sequence: str, topology: str, cuts: list[dict]) -> list[dict
                 }
             )
         else:
-            n = len(cuts)
-            for idx, cut in enumerate(cuts):
-                nxt = cuts[(idx + 1) % n]
+            # 物理切口按 (top_cut, bottom_cut) 排序；同 top_cut 的多条
+            # 切口只构成一个环形边界，末端信息取稳定顺序中的第一条
+            boundaries: list[dict] = []
+            seen_positions: set[int] = set()
+            for cut in cuts:
+                if cut["top_cut"] not in seen_positions:
+                    seen_positions.add(cut["top_cut"])
+                    boundaries.append(cut)
+            n = len(boundaries)
+            for idx, cut in enumerate(boundaries):
+                nxt = boundaries[(idx + 1) % n]
                 start = cut["top_cut"]
                 if n == 1:
-                    frag_len = length  # 单切口开环，得到整条分子的线性化序列
+                    frag_len = length  # 单边界开环，得到整条分子的线性化序列
                 else:
                     frag_len = (nxt["top_cut"] - start) % length
-                    if frag_len == 0:
-                        continue  # 同一切点的退化零长片段
                 end = (start + frag_len) % length
                 if start + frag_len >= length:
                     frag_seq = sequence[start:] + sequence[: (start + frag_len) % length]
