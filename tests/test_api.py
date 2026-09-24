@@ -103,6 +103,37 @@ def test_circular_digest_via_api(client):
     assert body["fragments"][0]["length"] == 10
 
 
+def test_circular_shared_top_cut_counts_consistent(client):
+    # 两个物理切口共用同一正链坐标：保存两个 cuts，片段按唯一边界生成
+    payload = eco_request(
+        sequence="AACAA",
+        topology="circular",
+        enzymes=[
+            {"name": "E1", "pattern": "AC", "cut_top": 0, "cut_bottom": 0},
+            {"name": "E2", "pattern": "AC", "cut_top": 0, "cut_bottom": 1},
+        ],
+    )
+    resp = client.post("/digests", json=payload)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert len(body["cuts"]) == 2
+    assert len(body["fragments"]) == 1  # 唯一边界开环为一条全长片段
+    frag = body["fragments"][0]
+    assert frag["length"] == 5
+    assert frag["sequence"] == "ACAAA"
+    assert frag["left_end"] == {"type": "blunt", "overhang": ""}
+
+    got = client.get(f"/digests/{body['id']}")
+    assert got.status_code == 200
+    assert got.json() == body  # 明细与提交时完全一致
+
+    items = client.get("/digests").json()
+    assert len(items) == 1
+    # 列表摘要计数与明细一致
+    assert items[0]["cut_count"] == len(body["cuts"]) == 2
+    assert items[0]["fragment_count"] == len(body["fragments"]) == 1
+
+
 def test_same_input_same_result_order(client):
     payload = eco_request(
         sequence="GAATTCAAAAGATATCTTTTGGTACC",

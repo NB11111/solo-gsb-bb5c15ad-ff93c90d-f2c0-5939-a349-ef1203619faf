@@ -147,6 +147,43 @@ def test_physical_cut_deduplicated():
     assert len(result["fragments"]) == 2
 
 
+def test_circular_shared_top_cut_single_boundary():
+    # 两种酶识别同一 AC 位点、cut_top 均为 0，cut_bottom 分别为 0/1：
+    # 产生两个物理切口 (1,1) 与 (1,2)，但正链上只有唯一断裂点
+    e1 = FakeEnzyme("E1", "AC", 0, 0)
+    e2 = FakeEnzyme("E2", "AC", 0, 1)
+    result = run_digest("AACAA", "circular", [e1, e2])
+    assert [(c["top_cut"], c["bottom_cut"]) for c in result["cuts"]] == [(1, 1), (1, 2)]
+    # 唯一边界开环：一条全长片段，不丢失
+    frags = result["fragments"]
+    assert len(frags) == 1
+    frag = frags[0]
+    assert (frag["index"], frag["start"], frag["end"], frag["length"]) == (0, 1, 1, 5)
+    assert frag["sequence"] == "ACAAA"  # seq[1:] + seq[:1]
+    assert frag["wraps_origin"] is True
+    # 同坐标末端信息取稳定切口顺序中的第一条（(1,1) blunt 先于 (1,2)）
+    assert frag["left_end"] == {"type": "blunt", "overhang": ""}
+    assert frag["right_end"] == {"type": "blunt", "overhang": ""}
+
+
+def test_circular_shared_top_cut_multiple_boundaries():
+    # 共用正链坐标的切口归并为一个边界；多个边界时片段长度之和等于序列长度
+    e1 = FakeEnzyme("E1", "AC", 0, 0)
+    e2 = FakeEnzyme("E2", "AC", 0, 1)
+    e3 = FakeEnzyme("E3", "AA", 0, 0)  # 额外边界 top=0、3、4
+    result = run_digest("AACAA", "circular", [e1, e2, e3])
+    boundaries = sorted({c["top_cut"] for c in result["cuts"]})
+    assert boundaries == [0, 1, 3, 4]
+    frags = result["fragments"]
+    assert len(frags) == len(boundaries)
+    assert sum(f["length"] for f in frags) == 5
+    assert [f["index"] for f in frags] == [0, 1, 2, 3]
+    assert [f["start"] for f in frags] == boundaries  # 按边界坐标稳定排列
+    # 每个片段的右端即下一边界的第一条切口
+    for idx, frag in enumerate(frags):
+        assert frag["end"] == boundaries[(idx + 1) % len(boundaries)]
+
+
 def test_no_cut_keeps_whole_molecule():
     seq = "AAAAAAAAAA"
     for topology in ("linear", "circular"):
